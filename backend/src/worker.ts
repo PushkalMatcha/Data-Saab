@@ -223,9 +223,10 @@ const processCsvJob = async (job: Job) => {
                 await job.updateProgress({ rows_processed: totalProcessed, valid_rows: validRowsCount });
 
                 try {
-                    // Dynamically import ES Module 'archiver'
-                    const archiverModule = await import('archiver');
+                    // Dynamically import ES Module 'archiver' using eval to prevent CJS compilation rewrite
+                    const archiverModule = await (eval("import('archiver')") as Promise<any>);
                     const ZipArchive = archiverModule.ZipArchive;
+
 
                     // Zip all chunks
                     const zipPath = path.join(SHARED_OUTPUTS_DIR, `${jobId}_completed.zip`);
