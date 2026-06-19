@@ -246,6 +246,25 @@ const processCsvJob = async (job: Job) => {
     });
 };
 
+import { randomUUID } from 'crypto';
+
+const workerId = randomUUID();
+
+// Start ping heartbeat
+const startHeartbeat = () => {
+  const interval = setInterval(async () => {
+    try {
+      await redisConnection.zadd('worker:active_pings', Date.now(), workerId);
+    } catch (err) {
+      console.error('Heartbeat failed:', err);
+    }
+  }, 2000);
+
+  return () => clearInterval(interval);
+};
+
+const stopHeartbeat = startHeartbeat();
+
 const worker = new Worker('csv_processing_jobs', async job => {
     console.log(`Processing job ${job.id}`);
     return await processCsvJob(job);
@@ -260,3 +279,23 @@ worker.on('failed', (job, err) => {
 });
 
 console.log("Worker is running and waiting for jobs...");
+
+const gracefulShutdown = async (signal: string) => {
+  console.log(`Received ${signal}, starting graceful shutdown...`);
+  stopHeartbeat();
+  try {
+    await redisConnection.zrem('worker:active_pings', workerId);
+    await worker.close();
+    await redisConnection.quit();
+    console.log('Worker shut down successfully.');
+    process.exit(0);
+  } catch (err) {
+    console.error('Error during graceful shutdown:', err);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+

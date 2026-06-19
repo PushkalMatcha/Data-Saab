@@ -2,13 +2,17 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UploadCloud, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Download, Terminal, BarChart3, ShieldAlert, Zap } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Download, Terminal, Database, FileCheck, FileX, Maximize2, Minimize2, Zap } from 'lucide-react';
+
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'completed' | 'error'>('idle');
+  
+  // Terminal Expansion State
+  const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
   
   // Telemetry State
   const [progressPercent, setProgressPercent] = useState(0);
@@ -19,16 +23,50 @@ export default function Home() {
   const ws = useRef<WebSocket | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
+  
+  const [isWorkerActive, setIsWorkerActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkWorkerStatus = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/status');
+        if (res.ok) {
+          const data = await res.json();
+          setIsWorkerActive(!!data.workerActive);
+        } else {
+          setIsWorkerActive(false);
+        }
+      } catch {
+        setIsWorkerActive(false);
+      }
+    };
+
+    // Check status immediately and then poll every 5s
+    checkWorkerStatus();
+    const interval = setInterval(checkWorkerStatus, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const addLog = (msg: string) => {
     setLogs((prev) => [...prev, msg]);
   };
 
+  // Auto-scroll terminal to bottom when new logs arrive OR when expanded
   useEffect(() => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [logs, isTerminalExpanded]);
+
+  // Prevent background scrolling when terminal is fullscreen
+  useEffect(() => {
+    if (isTerminalExpanded) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => { document.body.style.overflow = 'unset'; }
+  }, [isTerminalExpanded]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -123,22 +161,17 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-blue-200">
       {/* Premium Glassmorphism Navbar */}
-      <header className="sticky top-0 z-50 bg-white/70 backdrop-blur-md border-b border-slate-200/80">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-white/70 backdrop-blur-md border-b border-slate-200/80">
+        <div className="max-w-6xl mx-auto px-6 h-24 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-1.5 rounded-lg shadow-sm">
-              <FileSpreadsheet className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600">
-              Data Saab
-            </span>
+            <img src="/image.png" alt="Data Saab" className="h-20 w-auto object-contain" />
           </div>
           <div className="flex items-center gap-3 text-sm font-medium bg-white px-3 py-1.5 rounded-full shadow-sm border border-slate-200">
             <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isWorkerActive ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isWorkerActive ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
             </span>
-            <span className="text-slate-600">Worker Node: Active</span>
+            <span className="text-slate-600">Worker Node: {isWorkerActive ? 'Active' : 'Offline'}</span>
           </div>
         </div>
       </header>
@@ -148,7 +181,7 @@ export default function Home() {
         {/* Header */}
         <div className="space-y-2 max-w-2xl">
           <h1 className="text-4xl font-bold tracking-tight text-slate-900">Data Engineering Pipeline</h1>
-          <p className="text-slate-500 text-lg">High-throughput validation engine. Drop your raw CSVs below to automatically standardize, clean, and chunk your datasets.</p>
+          <p className="text-slate-500 text-lg">Don't let bad transaction data break your systems. Drop your raw CSVs below to instantly validate, sanitize, and partition into clean chunks.</p>
         </div>
 
         {/* Dynamic Live Metrics Row */}
@@ -160,7 +193,7 @@ export default function Home() {
               className="grid grid-cols-1 md:grid-cols-3 gap-4"
             >
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                <div className="bg-blue-50 p-3 rounded-lg"><BarChart3 className="w-6 h-6 text-blue-600" /></div>
+                <div className="bg-blue-50 p-3 rounded-lg"><Database className="w-6 h-6 text-blue-600" /></div>
                 <div>
                   <p className="text-sm font-medium text-slate-500">Total Processed</p>
                   <p className="text-2xl font-bold text-slate-900">{metrics.total.toLocaleString()}</p>
@@ -168,7 +201,7 @@ export default function Home() {
               </div>
               <div className="bg-white p-5 rounded-xl border border-emerald-100 shadow-sm flex items-center gap-4 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full blur-3xl -mr-10 -mt-10"></div>
-                <div className="bg-emerald-50 p-3 rounded-lg relative z-10"><Zap className="w-6 h-6 text-emerald-600" /></div>
+                <div className="bg-emerald-50 p-3 rounded-lg relative z-10"><FileCheck className="w-6 h-6 text-emerald-600" /></div>
                 <div className="relative z-10">
                   <p className="text-sm font-medium text-slate-500">Valid Rows Written</p>
                   <p className="text-2xl font-bold text-emerald-600">{metrics.valid.toLocaleString()}</p>
@@ -176,7 +209,7 @@ export default function Home() {
               </div>
               <div className="bg-white p-5 rounded-xl border border-red-100 shadow-sm flex items-center gap-4 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-red-50 rounded-full blur-3xl -mr-10 -mt-10"></div>
-                <div className="bg-red-50 p-3 rounded-lg relative z-10"><ShieldAlert className="w-6 h-6 text-red-500" /></div>
+                <div className="bg-red-50 p-3 rounded-lg relative z-10"><FileX className="w-6 h-6 text-red-500" /></div>
                 <div className="relative z-10">
                   <p className="text-sm font-medium text-slate-500">Anomalies Dropped</p>
                   <p className="text-2xl font-bold text-red-500">{metrics.failed.toLocaleString()}</p>
@@ -216,7 +249,7 @@ export default function Home() {
                       {file ? file.name : "Drag & drop your CSV"}
                     </h3>
                     <p className="text-slate-500 mb-6 max-w-sm">
-                      {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB ready for validation` : "Enterprise engine strictly handles datasets up to 5GB."}
+                      {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB ready for validation` : "Data Saab strictly handles datasets up to 5GB."}
                     </p>
                     {file && (
                       <button 
@@ -273,7 +306,7 @@ export default function Home() {
                         }}
                         className="mt-3 w-full bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
                       >
-                        Reset Pipeline
+                        Upload Another File
                       </motion.button>
                     )}
                   </motion.div>
@@ -282,18 +315,34 @@ export default function Home() {
             </motion.div>
           </div>
 
-          {/* Terminal Console */}
-          <div className="lg:col-span-2 flex flex-col h-full min-h-[320px]">
-            <div className="bg-[#0A0A0A] rounded-2xl overflow-hidden shadow-xl border border-slate-800 flex flex-col h-full">
+          {/* Terminal Console (With Maximize Logic) */}
+          <div className={
+            isTerminalExpanded 
+              ? "fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm p-4 md:p-12 flex items-center justify-center" 
+              : "lg:col-span-2 flex flex-col h-[450px]"
+          }>
+            <div className={`bg-[#0A0A0A] overflow-hidden shadow-2xl border border-slate-800 flex flex-col w-full transition-all duration-300
+              ${isTerminalExpanded ? 'h-full rounded-xl max-w-6xl' : 'h-full rounded-2xl'}`}>
+              
               <div className="bg-slate-900/50 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Terminal className="w-4 h-4 text-slate-400" />
                   <span className="text-xs font-semibold tracking-wider text-slate-300 uppercase">Worker Telemetry</span>
                 </div>
-                <div className="flex gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
-                  <div className="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
-                  <div className="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
+                <div className="flex items-center gap-4">
+                  {/* Expand/Minimize Button */}
+                  <button 
+                    onClick={() => setIsTerminalExpanded(!isTerminalExpanded)}
+                    className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+                    title={isTerminalExpanded ? "Minimize" : "Expand to full screen"}
+                  >
+                    {isTerminalExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  </button>
+                  <div className="flex gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
+                  </div>
                 </div>
               </div>
               

@@ -61,6 +61,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+app.get('/status', async (req, res) => {
+  try {
+    const now = Date.now();
+    const threshold = now - 5000; // 5 seconds ago
+    // Prune old workers that haven't pinged in 5s
+    await redisConnection.zremrangebyscore('worker:active_pings', 0, threshold);
+    // Count active workers
+    const activeCount = await redisConnection.zcard('worker:active_pings');
+    res.json({ workerActive: activeCount > 0 });
+  } catch (error) {
+    console.error("Failed to fetch workers:", error);
+    res.json({ workerActive: false });
+  }
+});
+
+
 app.get('/download/:jobId', (req, res) => {
   const jobId = req.params.jobId;
   const zipPath = path.join(SHARED_OUTPUTS_DIR, `${jobId}_completed.zip`);
