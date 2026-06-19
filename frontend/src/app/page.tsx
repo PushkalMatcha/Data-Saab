@@ -4,8 +4,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UploadCloud, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Download, Terminal, Database, FileCheck, FileX, Maximize2, Minimize2, Zap } from 'lucide-react';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || API_URL.replace(/^http/, 'ws');
 
 export default function Home() {
+
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -29,7 +32,8 @@ export default function Home() {
   useEffect(() => {
     const checkWorkerStatus = async () => {
       try {
-        const res = await fetch('http://localhost:8000/status');
+        const res = await fetch(`${API_URL}/status`);
+
         if (res.ok) {
           const data = await res.json();
           setIsWorkerActive(!!data.workerActive);
@@ -98,7 +102,7 @@ export default function Home() {
     formData.append('file', file);
 
     try {
-      const res = await fetch('http://localhost:8000/upload', {
+      const res = await fetch(`${API_URL}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -117,7 +121,7 @@ export default function Home() {
   useEffect(() => {
     if (status === 'processing' && jobId) {
       addLog(`[System] Connecting to WebSocket for real-time progress...`);
-      ws.current = new WebSocket(`ws://localhost:8000/progress/${jobId}`);
+      ws.current = new WebSocket(`${WS_URL}/progress/${jobId}`);
 
       ws.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -289,7 +293,7 @@ export default function Home() {
                       <motion.button 
                         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
                         onClick={() => {
-                          window.location.href = `http://localhost:8000${downloadUrl}`;
+                          window.location.href = `${API_URL}${downloadUrl}`;
                         }}
                         className="mt-8 w-full bg-slate-900 hover:bg-slate-800 text-white px-4 py-3.5 rounded-lg font-medium transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
                       >

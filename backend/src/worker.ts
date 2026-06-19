@@ -4,7 +4,6 @@ import * as path from 'path';
 import * as fastCsv from 'fast-csv';
 import { parsePhoneNumberFromString, CountryCode } from 'libphonenumber-js';
 import { isValid, format, parse } from 'date-fns';
-import { ZipArchive } from 'archiver';
 import dotenv from 'dotenv';
 import Redis from 'ioredis';
 
@@ -223,25 +222,34 @@ const processCsvJob = async (job: Job) => {
                 
                 await job.updateProgress({ rows_processed: totalProcessed, valid_rows: validRowsCount });
 
-                // Zip all chunks
-                const zipPath = path.join(SHARED_OUTPUTS_DIR, `${jobId}_completed.zip`);
-                const output = fs.createWriteStream(zipPath);
-                const archive = new ZipArchive({ zlib: { level: 9 } });
+                try {
+                    // Dynamically import ES Module 'archiver'
+                    const archiverModule = await import('archiver');
+                    const ZipArchive = archiverModule.ZipArchive;
 
-                output.on('close', () => {
-                    resolve({
-                        rows_processed: totalProcessed,
-                        valid_rows: validRowsCount,
+                    // Zip all chunks
+                    const zipPath = path.join(SHARED_OUTPUTS_DIR, `${jobId}_completed.zip`);
+                    const output = fs.createWriteStream(zipPath);
+                    const archive = new ZipArchive({ zlib: { level: 9 } });
+
+                    output.on('close', () => {
+                        resolve({
+                            rows_processed: totalProcessed,
+                            valid_rows: validRowsCount,
+                        });
                     });
-                });
 
-                archive.on('error', (err) => {
+                    archive.on('error', (err) => {
+                        reject(err);
+                    });
+
+                    archive.pipe(output);
+                    archive.directory(jobOutputDir, false);
+                    await archive.finalize();
+                } catch (err) {
                     reject(err);
-                });
+                }
 
-                archive.pipe(output);
-                archive.directory(jobOutputDir, false);
-                await archive.finalize();
             });
     });
 };

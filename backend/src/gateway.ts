@@ -4,7 +4,7 @@ import { Queue, QueueEvents } from 'bullmq';
 import { WebSocketServer } from 'ws';
 import path from 'path';
 import fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
@@ -30,7 +30,7 @@ const storage = multer.diskStorage({
     cb(null, SHARED_UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
-    const jobId = req.body.jobId || uuidv4();
+    const jobId = req.body.jobId || randomUUID();
     req.body.jobId = jobId; // ensure jobId is available later
     cb(null, `${jobId}_${file.originalname}`);
   }
