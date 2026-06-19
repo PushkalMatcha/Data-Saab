@@ -1,49 +1,50 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, CheckCircle, AlertCircle, FileArchive, Terminal, Play, Loader2 } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { UploadCloud, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Download, Terminal } from 'lucide-react';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'completed' | 'failed'>('idle');
+  const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'completed' | 'error'>('idle');
   const [progress, setProgress] = useState<{ rows_processed: number; valid_rows?: number; error?: string }>({ rows_processed: 0 });
   const [logs, setLogs] = useState<string[]>([]);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  
   const ws = useRef<WebSocket | null>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const terminalRef = useRef<HTMLDivElement>(null);
 
   const addLog = (msg: string) => {
-    setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    setLogs((prev) => [...prev, msg]);
   };
 
+  // Auto-scroll terminal to bottom when new logs arrive
   useEffect(() => {
-    // Auto scroll logs
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
   }, [logs]);
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       setFile(e.dataTransfer.files[0]);
     }
   };
 
-  const handleUpload = async () => {
+  const startPipeline = async () => {
     if (!file) return;
+    
     setStatus('uploading');
-    addLog(`Initiating upload for ${file.name}...`);
+    setProgress({ rows_processed: 0, valid_rows: 0 });
+    setDownloadUrl(null);
+    setLogs([`[${new Date().toLocaleTimeString()}] Initiating upload for ${file.name}...`]);
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      // Hardcoded for local dev, should be an env var
       const res = await fetch('http://localhost:8000/upload', {
         method: 'POST',
         body: formData,
@@ -52,37 +53,43 @@ export default function Home() {
       if (!res.ok) throw new Error('Upload failed');
       const data = await res.json();
       setJobId(data.job_id);
-      addLog(`Upload accepted. Job ID: ${data.job_id}`);
+      addLog(`[${new Date().toLocaleTimeString()}] Upload accepted. Job ID: ${data.job_id}`);
       setStatus('processing');
-    } catch (err) {
-      addLog(`Error: ${err}`);
-      setStatus('failed');
+    } catch (err: any) {
+      addLog(`[${new Date().toLocaleTimeString()}] ❌ Error: ${err.message}`);
+      setStatus('error');
     }
   };
 
   useEffect(() => {
     if (status === 'processing' && jobId) {
-      addLog(`Connecting to WebSocket for real-time progress...`);
+      addLog(`[${new Date().toLocaleTimeString()}] Connecting to WebSocket for real-time progress...`);
       ws.current = new WebSocket(`ws://localhost:8000/progress/${jobId}`);
 
       ws.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.status) {
-          setProgress(data);
+          setProgress({
+            rows_processed: data.rows_processed || 0,
+            valid_rows: data.valid_rows || 0,
+            error: data.error
+          });
+
           if (data.status === 'completed') {
             setStatus('completed');
-            addLog(`Processing completed. Final rows processed: ${data.rows_processed}`);
+            addLog(`[${new Date().toLocaleTimeString()}] ✅ Pipeline complete. Zipping output chunks...`);
+            setDownloadUrl(data.download_url || `/download/${jobId}`);
           } else if (data.status === 'failed') {
-            setStatus('failed');
-            addLog(`Processing failed: ${data.error}`);
+            setStatus('error');
+            addLog(`[${new Date().toLocaleTimeString()}] ❌ Processing failed: ${data.error}`);
           } else if (data.rows_processed > 0 && data.rows_processed % 5000 === 0) {
-             addLog(`Processed ${data.rows_processed} rows... Valid: ${data.valid_rows || 0}`);
+            addLog(`[${new Date().toLocaleTimeString()}] Processed ${data.rows_processed} rows... Valid: ${data.valid_rows || 0}`);
           }
         }
       };
 
       ws.current.onclose = () => {
-        addLog(`WebSocket connection closed.`);
+        addLog(`[${new Date().toLocaleTimeString()}] WebSocket connection closed.`);
       };
 
       return () => {
@@ -91,138 +98,156 @@ export default function Home() {
     }
   }, [status, jobId]);
 
+  // Calculate percentage dynamically based on file size (assuming average row size of 75 bytes)
+  const estimatedTotalRows = file ? Math.max(1, Math.round(file.size / 75)) : 1;
+  const progressPercent = status === 'completed'
+    ? 100
+    : status === 'uploading'
+      ? 0
+      : Math.min(99, Math.round((progress.rows_processed / estimatedTotalRows) * 100));
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100 pb-20">
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="bg-indigo-600 p-2 rounded-lg">
-            <CheckCircle className="w-5 h-5 text-white" />
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
+      {/* Navbar */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-blue-600 p-1.5 rounded-md">
+              <FileSpreadsheet className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-xl font-bold tracking-tight">Data Saab</span>
           </div>
-          <h1 className="text-xl font-semibold tracking-tight">Data Saab</h1>
+          <div className="flex items-center gap-4 text-sm font-medium text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Worker Node: Online
+            </span>
+          </div>
         </div>
-        <span className="text-sm font-medium text-slate-500 bg-slate-100 px-3 py-1 rounded-full">Enterprise Edition</span>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      {/* Main Content */}
+      <main className="max-w-4xl mx-auto px-6 py-12 space-y-8">
         
-        {/* Left Column: Actions & Progress */}
-        <div className="lg:col-span-7 flex flex-col gap-6">
-          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 transition-all hover:shadow-md">
-            <h2 className="text-lg font-semibold mb-1">Data Ingestion</h2>
-            <p className="text-slate-500 text-sm mb-6">Upload your massive CSV transaction logs for distributed processing.</p>
+        {/* Header Section */}
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Data Cleaning Pipeline</h1>
+          <p className="text-slate-500">Upload transaction datasets. The system will automatically validate, standardize, and chunk massive files.</p>
+        </div>
 
-            <div 
-              onDragOver={(e) => e.preventDefault()} 
-              onDrop={handleDrop}
-              className={cn(
-                "border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center text-center transition-colors cursor-pointer",
-                file ? "border-indigo-400 bg-indigo-50" : "border-slate-300 hover:border-indigo-400 hover:bg-slate-50"
+        {/* Upload Zone */}
+        <div 
+          className={`relative border-2 border-dashed rounded-xl p-12 transition-all duration-200 ease-in-out flex flex-col items-center justify-center text-center overflow-hidden bg-white
+            ${status === 'idle' ? 'border-slate-300 hover:border-blue-500 hover:bg-blue-50/50 cursor-pointer' : 'border-slate-200'}`}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => status === 'idle' && handleFileDrop(e)}
+          onClick={() => status === 'idle' && fileInputRef.current?.click()}
+        >
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            accept=".csv"
+            onChange={(e) => e.target.files && setFile(e.target.files[0])}
+          />
+          
+          {status === 'idle' && (
+            <>
+              <div className="bg-slate-100 p-4 rounded-full mb-4">
+                <UploadCloud className="w-8 h-8 text-slate-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-1">
+                {file ? file.name : "Click or drag CSV file to upload"}
+              </h3>
+              <p className="text-sm text-slate-500">
+                {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Strictly handles .csv files up to 5GB"}
+              </p>
+              {file && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); startPipeline(); }}
+                  className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
+                >
+                  Start Validation Pipeline
+                </button>
               )}
-              onClick={() => document.getElementById('file-upload')?.click()}
-            >
-              <input 
-                id="file-upload" 
-                type="file" 
-                accept=".csv" 
-                className="hidden" 
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-              />
-              <UploadCloud className={cn("w-12 h-12 mb-4", file ? "text-indigo-600" : "text-slate-400")} />
-              {file ? (
-                <>
-                  <p className="text-base font-medium text-slate-800">{file.name}</p>
-                  <p className="text-sm text-slate-500 mt-1">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-base font-medium text-slate-800">Drag & drop your CSV file here</p>
-                  <p className="text-sm text-slate-500 mt-1">or click to browse</p>
-                </>
-              )}
-            </div>
+            </>
+          )}
 
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={handleUpload}
-                disabled={!file || status !== 'idle'}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-              >
-                {status === 'uploading' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-                {status === 'uploading' ? 'Uploading...' : 'Start Processing'}
-              </button>
-            </div>
-          </section>
+          {/* Active Processing State */}
+          {status !== 'idle' && (
+            <div className="w-full max-w-md mx-auto space-y-6 py-4">
+              <div className="flex items-center justify-between text-sm font-medium">
+                <span className="text-slate-700 flex items-center gap-2">
+                  {(status === 'processing' || status === 'uploading') && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
+                  {status === 'completed' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                  {status === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
+                  {status === 'uploading' ? 'Uploading to Gateway...' : status === 'processing' ? 'Processing chunks...' : status === 'error' ? 'Pipeline Failed' : 'Pipeline Completed'}
+                </span>
+                <span className="text-slate-500">{progressPercent}%</span>
+              </div>
+              
+              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ease-out ${status === 'completed' ? 'bg-emerald-500' : status === 'error' ? 'bg-red-500' : 'bg-blue-600'}`}
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
 
-          {(status === 'processing' || status === 'completed' || status === 'failed') && (
-            <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 animate-in fade-in slide-in-from-bottom-4">
-              <div className="flex justify-between items-center mb-6">
+              {/* Show absolute counts */}
+              <div className="grid grid-cols-2 gap-4 text-center text-sm border-t border-slate-100 pt-4">
                 <div>
-                  <h2 className="text-lg font-semibold">Processing Pipeline</h2>
-                  <p className="text-slate-500 text-sm">Job ID: <span className="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">{jobId}</span></p>
+                  <div className="text-slate-500 font-medium">Rows Processed</div>
+                  <div className="text-blue-600 font-mono text-lg font-semibold">{progress.rows_processed.toLocaleString()}</div>
                 </div>
-                {status === 'processing' && <span className="flex h-3 w-3 relative"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span></span>}
-                {status === 'completed' && <CheckCircle className="w-6 h-6 text-emerald-500" />}
-                {status === 'failed' && <AlertCircle className="w-6 h-6 text-red-500" />}
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex justify-between text-sm font-medium">
-                  <span className="text-slate-600">Rows Processed</span>
-                  <span className="text-indigo-600 font-mono text-base">{progress.rows_processed.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-sm font-medium">
-                  <span className="text-slate-600">Valid Rows Written</span>
-                  <span className="text-emerald-600 font-mono text-base">{progress.valid_rows?.toLocaleString() || 0}</span>
+                <div>
+                  <div className="text-slate-500 font-medium">Valid Rows Written</div>
+                  <div className="text-emerald-600 font-mono text-lg font-semibold">{(progress.valid_rows || 0).toLocaleString()}</div>
                 </div>
               </div>
 
-              {status === 'completed' && (
-                <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col sm:flex-row gap-4 items-center justify-between bg-emerald-50 p-4 rounded-xl border border-emerald-100">
-                  <div className="flex items-center gap-3">
-                    <FileArchive className="w-8 h-8 text-emerald-600" />
-                    <div>
-                      <p className="font-medium text-emerald-900">Validation Complete</p>
-                      <p className="text-sm text-emerald-700">Output chunked and zipped.</p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => window.open(`http://localhost:8000${(progress as any).download_url || '/download'}`, '_blank')}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg font-medium shadow-sm transition-colors whitespace-nowrap"
-                  >
-                    Download Output
-                  </button>
-                </div>
+              {status === 'completed' && downloadUrl && (
+                <button 
+                  onClick={() => {
+                    window.location.href = `http://localhost:8000${downloadUrl}`;
+                  }}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg font-medium transition-colors shadow-sm flex items-center justify-center gap-2"
+                >
+                  <Download className="w-4 h-4" /> Download Cleaned Chunks (ZIP)
+                </button>
               )}
-            </section>
+
+              {status === 'error' && (
+                <button 
+                  onClick={() => setStatus('idle')}
+                  className="w-full bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
+                >
+                  Reset Dashboard
+                </button>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Right Column: Terminal Logs */}
-        <div className="lg:col-span-5 flex flex-col">
-          <section className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col h-[600px] sticky top-24">
-            <div className="bg-slate-950 px-4 py-3 flex items-center gap-2 border-b border-slate-800">
-              <Terminal className="w-4 h-4 text-slate-400" />
-              <span className="text-xs font-mono text-slate-400 font-medium uppercase tracking-wider">Worker Node Logs</span>
-            </div>
-            <div className="flex-1 p-4 overflow-y-auto font-mono text-xs sm:text-sm text-slate-300 space-y-2">
-              {logs.length === 0 ? (
-                <p className="text-slate-600 italic">Awaiting events...</p>
-              ) : (
-                logs.map((log, i) => (
-                  <div key={i} className="break-words border-b border-slate-800/50 pb-1">
-                    <span className="text-emerald-400 mr-2">›</span>
-                    {log}
-                  </div>
-                ))
-              )}
-              {status === 'processing' && (
-                <div className="flex items-center gap-2 mt-4 text-slate-500">
-                  <span className="w-2 h-4 bg-slate-500 block animate-pulse"></span> Waiting for next chunk...
+        {/* Live Terminal */}
+        <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+          <div className="bg-slate-50/80 border-b border-slate-200 px-4 py-3 flex items-center gap-2">
+            <Terminal className="w-4 h-4 text-slate-500" />
+            <h3 className="text-sm font-semibold text-slate-700">Worker Telemetry & Logs</h3>
+          </div>
+          <div 
+            ref={terminalRef}
+            className="h-64 overflow-y-auto p-4 bg-[#0A0A0A] text-slate-300 font-mono text-sm leading-relaxed"
+          >
+            {logs.length === 0 ? (
+              <p className="text-slate-600 italic">Waiting for pipeline to initiate...</p>
+            ) : (
+              logs.map((log, index) => (
+                <div key={index} className={`py-0.5 ${log.includes('❌') ? 'text-red-400' : log.includes('✅') ? 'text-emerald-400' : ''}`}>
+                  {log}
                 </div>
-              )}
-              <div ref={logsEndRef} />
-            </div>
-          </section>
+              ))
+            )}
+          </div>
         </div>
 
       </main>
